@@ -18,6 +18,7 @@ limitations under the License.
 #include <stdlib.h>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -30,6 +31,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/utils.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/statusor.h"
@@ -39,11 +43,7 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/status_matchers.h"
-#include "tfrt/host_context/async_dispatch.h"  // from @tf_runtime
-#include "tfrt/host_context/concurrent_work_queue.h"  // from @tf_runtime
-#include "tfrt/host_context/diagnostic.h"  // from @tf_runtime
-#include "tfrt/host_context/host_allocator.h"  // from @tf_runtime
-#include "tfrt/host_context/host_context.h"  // from @tf_runtime
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -568,17 +568,12 @@ TEST(StreamExecutorGpuClientTest, DistributeInit) {
     }
     return tsl::OkStatus();
   };
-  auto host_context = std::make_unique<tfrt::HostContext>(
-      [](const tfrt::DecodedDiagnostic& diag) {
-        LOG(ERROR) << "Encountered runtime error: " << diag.message() << "\n";
-      },
-      tfrt::CreateMallocAllocator(),
-      tfrt::CreateMultiThreadedWorkQueue(
-          /*num_threads=*/DefaultThreadPoolSize(),
-          /*num_blocking_threads=*/4));
+
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "DistributeInit", 4);
+
   int num_nodes = 2;
   for (int i = 0; i < num_nodes; i++) {
-    tfrt::EnqueueWork(host_context.get(), [&kv_get, &kv_put, i, num_nodes] {
+    thread_pool.Schedule([&, i] {
       TF_ASSERT_OK_AND_ASSIGN(
           auto client,
           GetStreamExecutorGpuClient(
@@ -586,10 +581,28 @@ TEST(StreamExecutorGpuClientTest, DistributeInit) {
               /*node_id=*/i, num_nodes, /*allowed_devices=*/std::nullopt,
               /*platform_name=*/std::nullopt,
               /*should_stage_host_to_device_transfers=*/true, kv_get, kv_put));
-      EXPECT_EQ(client->platform_name(), "gpu");
+      EXPECT_TRUE(client->platform_name() == "cuda" ||
+                  client->platform_name() == "rocm");
       EXPECT_EQ(client->addressable_device_count(), 2);
       EXPECT_EQ(client->device_count(), 4);
     });
+  }
+}
+
+TEST(StreamExecutorGpuClientTest, GetAllocatorStatsTest) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto client, GetStreamExecutorGpuClient(true, /*allocator_config=*/{},
+                                              /*node_id=*/0));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+
+  for (auto device : client->addressable_devices()) {
+    const xla::Literal literal = xla::LiteralUtil::CreateR0<int32_t>(0);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buffer,
+                            client->BufferFromHostLiteral(literal, device));
+
+    auto stats = device->GetAllocatorStats();
+    TF_ASSERT_OK(stats.status());
+    ASSERT_GT(stats.value().peak_bytes_in_use, 0);
   }
 }
 

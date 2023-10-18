@@ -377,8 +377,6 @@ StatusOr<DatasetDef> DataServiceWorkerImpl::GetDatasetDef(
 
 StatusOr<bool> DataServiceWorkerImpl::DisableCompressionAtRuntime(
     const std::string& dataset_id) const {
-  DisableCompressionAtRuntimeRequest request;
-  request.set_dataset_id(dataset_id);
   DisableCompressionAtRuntimeResponse response;
 
   absl::Time deadline =
@@ -389,16 +387,12 @@ StatusOr<bool> DataServiceWorkerImpl::DisableCompressionAtRuntime(
   };
   TF_RETURN_IF_ERROR(grpc_util::Retry(
       [&]() {
-        return dispatcher_->DisableCompressionAtRuntime(request, response);
+        return dispatcher_->DisableCompressionAtRuntime(
+            dataset_id, /*disable_compression_at_runtime=*/false, response);
       },
       should_retry, "Disable compression at runtime.",
       absl::ToUnixMicros(deadline)));
 
-  if (response.not_enough_information()) {
-    return errors::Internal(
-        "Either compression should not have been set or a runtime compression "
-        "disabling decision should've been made.");
-  }
   if (response.no_compression_to_disable()) {
     return false;
   }
@@ -415,10 +409,14 @@ DataServiceWorkerImpl::MakeDataset(const DatasetDef& dataset_def,
   GraphDef graph = dataset_def.graph();
   if (compression_disabled_at_runtime) {
     RemoveCompressionMapRewriter remove_compression_map_rewriter;
+    VLOG(2) << "Applying compression map rewrite. GraphDef: "
+            << graph.DebugString();
     TF_ASSIGN_OR_RETURN(
         graph, remove_compression_map_rewriter.ApplyRemoveCompressionMapRewrite(
                    graph));
   }
+  VLOG(2) << "Applying autoshard rewrite. TaskDef: " << task_def.DebugString()
+          << ", GraphDef: " << graph.DebugString();
   TF_ASSIGN_OR_RETURN(AutoShardRewriter auto_shard_rewriter,
                       AutoShardRewriter::Create(task_def));
   // `ApplyAutoShardRewrite` does nothing if auto-sharding is disabled.

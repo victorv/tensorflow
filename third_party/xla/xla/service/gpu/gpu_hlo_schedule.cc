@@ -32,12 +32,15 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/latency_hiding_scheduler.h"
-#include "xla/service/latency_hiding_scheduler_preparation.h"
+#include "xla/service/p2p_schedule_preparation.h"
 #include "xla/service/profile_guided_latency_estimator.h"
+#include "xla/stream_executor/device_description.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {
@@ -595,7 +598,12 @@ int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
 }
 
 Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
-                         int64_t memory_limit) {
+                         int64_t memory_limit,
+                         const se::DeviceDescription& gpu_device_info) {
+  HloPassPipeline prepare_pipeline("p2p-schedule-preparation");
+  prepare_pipeline.AddPass<P2PSchedulePreparation>();
+  TF_RETURN_IF_ERROR(prepare_pipeline.Run(module).status());
+
   TF_ASSIGN_OR_RETURN(
       HloSchedule schedule,
       ScheduleGpuModuleWithMemoryScheduler(module, pointer_size));
@@ -627,6 +635,11 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
   std::unique_ptr<LatencyEstimator> latency_estimator;
   std::optional<tensorflow::profiler::ProfiledInstructionsProto> profile =
       ReadPGLEProfile(module, fingerprint);
+
+  const bool enable_analytical_latency_estimator =
+      module->config()
+          .debug_options()
+          .xla_gpu_enable_analytical_latency_estimator();
   if (profile.has_value()) {
     latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
         config, std::move(gpu_latency_estimator), profile.value());
@@ -637,6 +650,14 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
                    "still be used : "
                 << s.message();
     }
+  } else if (enable_analytical_latency_estimator) {
+    latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
+        config, std::move(gpu_latency_estimator), gpu_device_info,
+        [input_pointer_size = pointer_size](const Shape& shape) {
+          return GetSizeOfShape(shape, input_pointer_size);
+        },
+        module->entry_computation());
+    LOG(INFO) << "Using analytical latency estimator";
   } else {
     latency_estimator = std::move(gpu_latency_estimator);
   }
@@ -656,8 +677,6 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       shape_size_in_bytes, async_tracker.get(), latency_estimator.get(),
       config);
-
-  pipeline.AddPass<LatencyHidingSchedulerPreparation>();
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(latency_estimator), std::move(async_tracker),
       std::move(scheduler_core), shape_size_in_bytes);
@@ -675,7 +694,7 @@ HloInstructionSequence PostProcessSchedule(
 // Compute the device memory limit to be used by passes like scheduler and
 // HLO rematerialization.
 int64_t GetSchedulerMemoryLimit(const HloModule* module,
-                                const GpuDeviceInfo& gpu_device_info,
+                                const se::DeviceDescription& gpu_device_info,
                                 int pointer_size) {
   // There is a "base" value which is either specified in HloModuleConfig (this
   // value should take into account the fact that we need to leave some memory
@@ -688,7 +707,7 @@ int64_t GetSchedulerMemoryLimit(const HloModule* module,
   const int64_t base_limit =
       module->config().device_memory_size() != 0
           ? module->config().device_memory_size()
-          : gpu_device_info.device_memory_size * 80 / 100;
+          : gpu_device_info.device_memory_size() * 80 / 100;
 
   // Find the total size of inputs and outputs.
   int64_t total_io_size = 0;

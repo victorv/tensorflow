@@ -41,10 +41,12 @@ Thunk::ExecuteParams::ExecuteParams(
     return #x
   switch (kind) {
     CASE(kCholesky);
+    CASE(kCommandBuffer);
     CASE(kConditional);
     CASE(kConvolution);
     CASE(kConvolutionReorder);
     CASE(kCopy);
+    CASE(kCubSort);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kNcclAllGather);

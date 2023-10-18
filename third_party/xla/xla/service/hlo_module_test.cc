@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -149,6 +150,21 @@ TEST_F(HloModuleTest, CloneTest) {
   }
 }
 
+TEST_F(HloModuleTest, CloneFrontendAttributes) {
+  auto module = CreateNewVerifiedModule();
+  FrontendAttributes frontend_attributes;
+  frontend_attributes.mutable_map()->emplace("attribute1", "attribute1_value");
+  module->set_frontend_attributes(frontend_attributes);
+  std::unique_ptr<HloModule> clone = module->Clone();
+  bool areEqual = std::equal(
+      frontend_attributes.map().begin(), frontend_attributes.map().end(),
+      clone->frontend_attributes().map().begin(),
+      [](const auto& kv1, const auto& kv2) {
+        return kv1.first == kv2.first && kv1.second == kv2.second;
+      });
+  EXPECT_TRUE(areEqual);
+}
+
 TEST_F(HloModuleTest, CloneHasFusion) {
   auto module = CreateNewVerifiedModule();
 
@@ -217,7 +233,8 @@ ENTRY entry () -> s32[] {
   HloComputation* cloned_computation =
       cloned_module->GetComputationWithName("add_s32.clone");
   HloInstruction* cloned_custom_call =
-      cloned_module->entry_computation()->GetInstructionWithName("custom-call");
+      cloned_module->entry_computation()->GetInstructionWithName(
+          "custom-call.clone");
 
   EXPECT_TRUE(cloned_computation->IsCustomCallComputation());
   EXPECT_EQ(cloned_computation->CustomCallInstruction(), cloned_custom_call);
@@ -257,7 +274,8 @@ ENTRY entry () -> s32[] {
   HloComputation* cloned_computation_1 =
       cloned_module->GetComputationWithName("add_s32_1.clone");
   HloInstruction* cloned_custom_call =
-      cloned_module->entry_computation()->GetInstructionWithName("custom-call");
+      cloned_module->entry_computation()->GetInstructionWithName(
+          "custom-call.clone");
 
   EXPECT_TRUE(cloned_computation_0->IsCustomCallComputation());
   EXPECT_EQ(cloned_computation_0->CustomCallInstruction(), cloned_custom_call);
@@ -285,7 +303,8 @@ ENTRY main {
   HloComputation* cloned_computation =
       cloned_module->GetComputationWithName("fused_computation.clone");
   HloInstruction* cloned_fusion_instr =
-      cloned_module->entry_computation()->GetInstructionWithName("fusion");
+      cloned_module->entry_computation()->GetInstructionWithName(
+          "fusion.clone");
 
   EXPECT_TRUE(cloned_computation->IsFusionComputation());
   EXPECT_EQ(cloned_computation->FusionInstruction(), cloned_fusion_instr);

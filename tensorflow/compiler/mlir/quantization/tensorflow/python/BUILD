@@ -1,13 +1,13 @@
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
 load(
-    "//tensorflow/core/platform:build_config_root.bzl",
-    "if_static",
-)
-load(
     "//tensorflow:tensorflow.default.bzl",
     "get_compatible_with_portable",
     "tf_py_strict_test",
     "tf_python_pybind_extension",
+)
+load(
+    "//tensorflow/core/platform:build_config_root.bzl",
+    "if_static",
 )
 
 package(
@@ -75,6 +75,7 @@ cc_library(
         "@local_tsl//tsl/platform:path",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -140,10 +141,9 @@ pytype_strict_library(
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/client:session",
-        "//tensorflow/python/framework",
-        "//tensorflow/python/framework:dtypes",
+        "//tensorflow/python/framework:importer",
         "//tensorflow/python/framework:ops",
-        "//tensorflow/python/lib/io:lib",
+        "//tensorflow/python/lib/io:file_io",
         "//tensorflow/python/ops:variables",
         "//tensorflow/python/saved_model:builder",
         "//tensorflow/python/saved_model:constants",
@@ -176,7 +176,7 @@ pytype_strict_library(
         "//tensorflow/python/eager:wrap_function",
         "//tensorflow/python/framework:ops",
         "//tensorflow/python/framework:tensor_conversion",
-        "//tensorflow/python/lib/io:lib",
+        "//tensorflow/python/lib/io:file_io",
         "//tensorflow/python/platform:tf_logging",
         "//tensorflow/python/saved_model:load",
         "//tensorflow/python/saved_model:loader",
@@ -214,7 +214,7 @@ tf_py_strict_test(
         "//tensorflow/python/framework:tensor_shape",
         "//tensorflow/python/framework:tensor_spec",
         "//tensorflow/python/framework:test_lib",
-        "//tensorflow/python/lib/io:lib",
+        "//tensorflow/python/lib/io:file_io",
         "//tensorflow/python/module",
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:math_ops",
@@ -251,7 +251,7 @@ pytype_strict_library(
         "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:ops",
         "//tensorflow/python/framework:tensor_spec",
-        "//tensorflow/python/lib/io:lib",
+        "//tensorflow/python/lib/io:file_io",
         "//tensorflow/python/module",
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:array_ops_stack",
@@ -311,7 +311,7 @@ pytype_strict_library(
         "//tensorflow/python/data/ops:readers",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/framework:tensor_util",
-        "//tensorflow/python/lib/io:lib",
+        "//tensorflow/python/lib/io:python_io",
         "//tensorflow/python/platform:tf_logging",
         "//tensorflow/python/types:core",
         "//tensorflow/python/util:tf_export",
